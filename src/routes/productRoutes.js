@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
-import multer from 'multer';
 import {
     createProduct,
     getAllProducts,
@@ -8,12 +7,14 @@ import {
     updateProduct,
     deleteProduct,
     addProductRating,
-    uploadProductImages
+    uploadProductImages,
+    deleteProductImage,
+    updateProductImages
 } from '../controllers/productController.js';
 import { authenticate, authorizeAdmin } from '../middleware/auth.js';
+import upload from '../middleware/upload.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
 
 /**
  * @swagger
@@ -75,9 +76,27 @@ const upload = multer({ storage: multer.memoryStorage() });
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
- *             $ref: '#/components/schemas/Product'
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               price:
+ *                 type: number
+ *               category:
+ *                 type: string
+ *               quantity:
+ *                 type: number
+ *               sku:
+ *                 type: string
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
  *     responses:
  *       201:
  *         description: Product created successfully
@@ -85,6 +104,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.post('/',
     authenticate,
     authorizeAdmin,
+    upload.array('images', 5),
     [
         body('name').trim().notEmpty().withMessage('Product name is required'),
         body('description').trim().notEmpty().withMessage('Description is required'),
@@ -232,6 +252,75 @@ router.post('/:id/images',
     authorizeAdmin,
     upload.array('images', 5),
     uploadProductImages
+);
+
+/**
+ * @swagger
+ * /api/products/{id}/images/{imageId}:
+ *   delete:
+ *     summary: Delete a product image
+ *     security:
+ *       - bearerAuth: []
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: imageId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Image deleted successfully
+ */
+router.delete('/:id/images/:imageId',
+    authenticate,
+    authorizeAdmin,
+    deleteProductImage
+);
+
+/**
+ * @swagger
+ * /api/products/{id}/images:
+ *   put:
+ *     summary: Update product images (delete existing and/or add new)
+ *     security:
+ *       - bearerAuth: []
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *               imagesToDelete:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Images updated successfully
+ */
+router.put('/:id/images',
+    authenticate,
+    authorizeAdmin,
+    upload.array('images', 5),
+    updateProductImages
 );
 
 /**

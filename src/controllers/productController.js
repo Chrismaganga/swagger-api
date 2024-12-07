@@ -1,6 +1,6 @@
 import { validationResult } from 'express-validator';
 import Product from '../models/Product.js';
-import cloudinary from '../config/cloudinary.js';
+import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js';
 
 export const createProduct = async (req, res) => {
     try {
@@ -10,6 +10,18 @@ export const createProduct = async (req, res) => {
         }
 
         const product = new Product(req.body);
+        
+        // Handle image uploads if files are present
+        if (req.files && req.files.length > 0) {
+            const uploadPromises = req.files.map(file => uploadToCloudinary(file.buffer));
+            const uploadedImages = await Promise.all(uploadPromises);
+            
+            product.images = uploadedImages.map(image => ({
+                url: image.secure_url,
+                public_id: image.public_id
+            }));
+        }
+
         await product.save();
         
         res.status(201).json({
@@ -143,7 +155,7 @@ export const deleteProduct = async (req, res) => {
         // Delete images from cloudinary
         for (const image of product.images) {
             if (image.public_id) {
-                await cloudinary.uploader.destroy(image.public_id);
+                await deleteFromCloudinary(image.public_id);
             }
         }
 
@@ -178,27 +190,111 @@ export const uploadProductImages = async (req, res) => {
             });
         }
 
-        const uploadPromises = req.files.map(file => {
-            return new Promise((resolve, reject) => {
-                const uploadStream = cloudinary.uploader.upload_stream(
-                    {
-                        folder: 'products',
-                    },
-                    (error, result) => {
-                        if (error) reject(error);
-                        else resolve({
-                            url: result.secure_url,
-                            public_id: result.public_id
-                        });
-                    }
-                );
-
-                uploadStream.end(file.buffer);
-            });
-        });
-
+        // Upload new images
+        const uploadPromises = req.files.map(file => uploadToCloudinary(file.buffer));
         const uploadedImages = await Promise.all(uploadPromises);
-        product.images.push(...uploadedImages);
+        
+        const newImages = uploadedImages.map(image => ({
+            url: image.secure_url,
+            public_id: image.public_id
+        }));
+
+        // Add new images to product
+        product.images.push(...newImages);
+        await product.save();
+
+        res.status(200).json({
+            success: true,
+            data: product
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
+export const deleteProductImage = async (req, res) => {
+    try {
+        const { id, imageId } = req.params;
+
+        const product = await Product.findById(id);
+        if (!product) {
+            return res.status(404).json({
+                success: false,
+                error: 'Product not found'
+            });
+        }
+
+        // Find the image to delete
+        const imageToDelete = product.images.find(img => img._id.toString() === imageId);
+        if (!imageToDelete) {
+            return res.status(404).json({
+                success: false,
+                error: 'Image not found'
+            });
+        }
+
+        // Delete from Cloudinary
+        if (imageToDelete.public_id) {
+            await deleteFromCloudinary(imageToDelete.public_id);
+        }
+
+        // Remove image from product
+        product.images = product.images.filter(img => img._id.toString() !== imageId);
+        await product.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Image deleted successfully'
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+};
+
+export const updateProductImages = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { imagesToDelete } = req.body;
+
+        const product = await Product.findById(id);
+        if (!product) {
+            return res.status(404).json({
+                success: false,
+                error: 'Product not found'
+            });
+        }
+
+        // Delete specified images
+        if (imagesToDelete && imagesToDelete.length > 0) {
+            const deletePromises = imagesToDelete.map(async (imageId) => {
+                const image = product.images.find(img => img._id.toString() === imageId);
+                if (image && image.public_id) {
+                    await deleteFromCloudinary(image.public_id);
+                }
+            });
+            await Promise.all(deletePromises);
+            product.images = product.images.filter(img => !imagesToDelete.includes(img._id.toString()));
+        }
+
+        // Upload new images if any
+        if (req.files && req.files.length > 0) {
+            const uploadPromises = req.files.map(file => uploadToCloudinary(file.buffer));
+            const uploadedImages = await Promise.all(uploadPromises);
+            
+            const newImages = uploadedImages.map(image => ({
+                url: image.secure_url,
+                public_id: image.public_id
+            }));
+
+            product.images.push(...newImages);
+        }
+
         await product.save();
 
         res.status(200).json({
